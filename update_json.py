@@ -1,131 +1,201 @@
-import requests
-import pandas as pd
-import re
-from datetime import timedelta
-
-# 1. Download e normalizzazione JSON → DataFrame
-url = "https://data-v2.hacs.xyz/integration/data.json"
-resp = requests.get(url)
-resp.raise_for_status()
-raw = resp.json()
-records = list(raw.values()) if isinstance(raw, dict) else raw
-df = pd.json_normalize(records)
-
-# 2. Colonne di base già viste: stars, recency_norm...
-df['stars'] = df['stargazers_count'].fillna(0).astype(int)
-max_stars = df['stars'].max() or 1
-df['stars_norm'] = df['stars'] / max_stars
-
-df['last_updated'] = pd.to_datetime(df['last_updated'], utc=True)
-min_date = df['last_updated'].min()
-max_date = df['last_updated'].max()
-total_days = max((max_date - min_date).days, 1)
-df['recency_norm'] = df['last_updated'].apply(lambda d: (d - min_date).days / total_days)
-
-# 3. TOP DOWNLOADS
-df['downloads'] = df['downloads'].fillna(0).astype(int)
-max_dl = df['downloads'].max() or 1
-df['downloads_norm'] = df['downloads'] / max_dl
-# booleano: top 10% dei download
-threshold = df['downloads'].quantile(0.90)
-df['is_top_downloads'] = df['downloads'] >= threshold
-
-# 4. STATO DI SVILUPPO basato su last_updated
-now = pd.Timestamp.now(tz='UTC')
-ages = (now - df['last_updated']).dt.days
-def dev_status(days):
-    if days > 365:
-        return 'abandoned'
-    if days > 180:
-        return 'inactive'
-    if days > 30:
-        return 'maintained'
-    return 'active'
-df['development_status'] = ages.map(dev_status)
-
-# 5. METRICHE AGGIUNTIVE
-# 5.1 Open issues normalizzate
-df['open_issues'] = df['open_issues'].fillna(0).astype(int)
-max_issues = df['open_issues'].max() or 1
-df['issues_norm'] = df['open_issues'] / max_issues
-
-# 5.2 Popularity score (stelle + download)
-df['popularity_score'] = 0.5 * df['stars_norm'] + 0.5 * df['downloads_norm']
-
-# 5.3 Conteggio topics e lunghezza descrizione
-df['topic_count'] = df['topics'].apply(lambda x: len(x) if isinstance(x, list) else (1 if isinstance(x, str) and x.strip() else 0))
-df['description_length'] = df['description'].fillna('').apply(lambda s: len(s))
-
-# 6. (Rimane uguale) Raccomandazioni basate soprattutto sui topics
-def make_topics_set(row):
-    t = row.get('topics')
-    if isinstance(t, list):
-        return set(t)
-    elif isinstance(t, str) and t.strip():
-        return {t.strip()}
-    return set()
-
-def make_semantic_set(row):
-    tags = set()
-    d = row.get('domain')
-    if isinstance(d, str) and d.strip():
-        tags.add(d.strip())
-    words = re.findall(r'\w+', (row.get('description') or '').lower())
-    tags |= {w for w in words if len(w) > 2}
-    return tags
-
-df['topics_set']   = df.apply(make_topics_set, axis=1)
-df['semantic_set'] = df.apply(make_semantic_set, axis=1)
-
-def jaccard(a, b):
-    if not a and not b: return 0.0
-    return len(a & b) / len(a | b)
-
-# Pesi riequilibrati: ancora più peso ai topics
-w_topics   = 0.6
-w_semantic = 0.2
-w_pop      = 0.15
-w_recency  = 0.05
-
-names       = df['full_name'].tolist()
-topics_sets = df['topics_set'].tolist()
-sem_sets    = df['semantic_set'].tolist()
-pop_scores  = df['popularity_score'].tolist()
-rec_n       = df['recency_norm'].tolist()
-
-recommendations = []
-for i in range(len(df)):
-    scores = []
-    for j in range(len(df)):
-        if i == j: continue
-        score = (
-            w_topics   * jaccard(topics_sets[i], topics_sets[j]) +
-            w_semantic * jaccard(sem_sets[i],    sem_sets[j])    +
-            w_pop      * pop_scores[j]                             +
-            w_recency  * rec_n[j]
-        )
-        scores.append((j, score))
-    top5 = sorted(scores, key=lambda x: x[1], reverse=True)[:5]
-    recommendations.append([names[j] for j, _ in top5])
-
-df['recommendations'] = recommendations
-
-# 7. Controllo rapido
-print(df[[
-    'full_name','stars','downloads','is_top_downloads',
-    'development_status','popularity_score','topic_count',
-    'description_length','recommendations'
-]].head(10))
-
+#!/usr/bin/env python3
 import json
+import logging
+import os
+import re
+import time
+from argparse import ArgumentParser
+from datetime import datetime, timedelta
 
+import pandas as pd
+import requests
 
-# 8. Esporta con pandas.to_json (minificato e con date ISO)
-df.to_json(
-    'docs/integrations_enhanced.json',
-    orient='records',
-    force_ascii=False,
-    date_format='iso',
-    date_unit='ms'      # opzionale, imposta unità dei timestamp
+# ————————————————————————————————————————————————————————————————
+# CONFIGURAZIONE & LOGGER
+# ————————————————————————————————————————————————————————————————
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
 )
-print("JSON esportato in docs/integrations_enhanced.json")
+
+WEIGHTS = {
+    'topics':     0.6,
+    'semantic':   0.2,
+    'popularity': 0.15,
+    'recency':    0.05,
+}
+
+# ————————————————————————————————————————————————————————————————
+# 1) FETCH DEL JSON CON RETRY
+# ————————————————————————————————————————————————————————————————
+def fetch_json(url: str, retries: int = 3, backoff: int = 2) -> list[dict]:
+    session = requests.Session()
+    for attempt in range(1, retries + 1):
+        try:
+            r = session.get(url, timeout=10)
+            r.raise_for_status()
+            data = r.json()
+            return list(data.values()) if isinstance(data, dict) else data
+        except Exception as e:
+            logging.warning(f"[try {attempt}/{retries}] fetch error: {e}")
+            if attempt < retries:
+                time.sleep(backoff**attempt)
+            else:
+                raise
+    return []
+
+# ————————————————————————————————————————————————————————————————
+# 2) PREPROCESS E FEATURE ENGINEERING
+# ————————————————————————————————————————————————————————————————
+def preprocess(df: pd.DataFrame) -> pd.DataFrame:
+    # --- 2.1 colonne numeriche di base
+    df['stars']       = df['stargazers_count'].fillna(0).astype(int)
+    df['downloads']   = df['downloads'].fillna(0).astype(int)
+    df['open_issues'] = df['open_issues'].fillna(0).astype(int)
+
+    # --- 2.2 watchers (0 se non esiste)
+    if 'watchers_count' not in df.columns:
+        df['watchers_count'] = 0
+    df['watchers_count'] = df['watchers_count'].fillna(0).astype(int)
+
+    # --- 2.3 normalizzazioni [0,1]
+    df[['stars_norm', 'downloads_norm', 'issues_norm', 'watchers_norm']] = (
+        df[['stars', 'downloads', 'open_issues', 'watchers_count']]
+        .div([
+            df['stars'].max() or 1,
+            df['downloads'].max() or 1,
+            df['open_issues'].max() or 1,
+            df['watchers_count'].max() or 1
+        ], axis=1)
+    )
+
+    # --- 2.4 recency_norm
+    df['last_updated'] = pd.to_datetime(df['last_updated'], utc=True)
+    min_d, max_d = df['last_updated'].min(), df['last_updated'].max()
+    span_days = max((max_d - min_d).days, 1)
+    df['recency_norm'] = df['last_updated'].apply(lambda d: (d - min_d).days / span_days)
+
+    # --- 2.5 development status
+    now = pd.Timestamp.now(tz='UTC')
+    df['age_days'] = (now - df['last_updated']).dt.days
+    df['development_status'] = pd.cut(
+        df['age_days'],
+        bins=[-1, 30, 180, 365, float('inf')],
+        labels=['active', 'maintained', 'inactive', 'abandoned']
+    ).astype(str)
+
+    # --- 2.6 top-download booleano
+    q90 = df['downloads'].quantile(0.90)
+    df['is_top_downloads'] = df['downloads'] >= q90
+
+    # --- 2.7 popularity_score
+    df['popularity_score'] = 0.5 * df['stars_norm'] + 0.5 * df['downloads_norm']
+
+    # --- 2.8 metadati
+    df['topic_count']       = df['topics'].apply(lambda x: len(x) if isinstance(x, list) else 0)
+    df['description_length']= df['description'].fillna('').astype(str).str.len()
+
+    # --- 2.9 top-100 flags per indicatore chiave
+    numeric_inds = [
+        'stars', 'downloads', 'watchers_count',
+        'popularity_score', 'recency_norm', 'issues_norm'
+    ]
+    for ind in numeric_inds:
+        flag_col = f'is_top100_{ind}'
+        df[flag_col] = df[ind].rank(method='first', ascending=False) <= 100
+
+    return df
+
+# ————————————————————————————————————————————————————————————————
+# 3) COSTRUZIONE SET DI TAG
+# ————————————————————————————————————————————————————————————————
+def make_sets(row: pd.Series) -> tuple[set, set]:
+    # topics-only
+    t = row.get('topics') or []
+    topics_set = set(t) if isinstance(t, list) else {t} if t else set()
+    # semantic = domain + tokenized description
+    sem = set()
+    if (d := row.get('domain')): sem.add(d)
+    desc = row.get('description') or ''
+    words = re.findall(r'\w+', str(desc).lower())
+    sem |= {w for w in words if len(w) > 2}
+    return topics_set, sem
+
+# ————————————————————————————————————————————————————————————————
+# 4) JACCARD SIMILARITY
+# ————————————————————————————————————————————————————————————————
+def jaccard(a: set, b: set) -> float:
+    return len(a & b) / len(a | b) if (a or b) else 0.0
+
+# ————————————————————————————————————————————————————————————————
+# 5) RACCOMANDAZIONI IBRIDE
+# ————————————————————————————————————————————————————————————————
+def compute_recommendations(df: pd.DataFrame, top_k: int = 5) -> list[list[str]]:
+    topics_sets, sem_sets = zip(*df.apply(make_sets, axis=1))
+    pop_score = df['popularity_score'].tolist()
+    rec_norm  = df['recency_norm'].tolist()
+    names     = df['full_name'].tolist()
+
+    recs = []
+    for i in range(len(df)):
+        scores = []
+        for j in range(len(df)):
+            if i == j: continue
+            score = (
+                WEIGHTS['topics']     * jaccard(topics_sets[i], topics_sets[j]) +
+                WEIGHTS['semantic']   * jaccard(sem_sets[i],       sem_sets[j])   +
+                WEIGHTS['popularity'] * pop_score[j]                                +
+                WEIGHTS['recency']    * rec_norm[j]
+            )
+            scores.append((j, score))
+        top = sorted(scores, key=lambda x: x[1], reverse=True)[:top_k]
+        recs.append([names[j] for j, _ in top])
+    return recs
+
+# ————————————————————————————————————————————————————————————————
+# 6) SALVATAGGIO ATOMICO
+# ————————————————————————————————————————————————————————————————
+def save_json(df: pd.DataFrame, out_path: str, atomically: bool = True):
+    clean = df.where(pd.notnull(df), None).to_dict(orient='records')
+    data = json.dumps(clean, ensure_ascii=False, separators=(',', ':'), default=str)
+    if atomically:
+        tmp = out_path + '.tmp'
+        with open(tmp, 'w', encoding='utf-8') as f:
+            f.write(data)
+        os.replace(tmp, out_path)
+    else:
+        with open(out_path, 'w', encoding='utf-8') as f:
+            f.write(data)
+    logging.info(f"Wrote {len(clean)} records to {out_path}")
+
+# ————————————————————————————————————————————————————————————————
+# MAIN: orchestrazione
+# ————————————————————————————————————————————————————————————————
+def main():
+    parser = ArgumentParser(description="Genera integrations_enhanced.json")
+    parser.add_argument('--url',   default="https://data-v2.hacs.xyz/integration/data.json")
+    parser.add_argument('--out',   default="docs/integrations_enhanced.json")
+    parser.add_argument('--top-k', type=int, default=5)
+    args = parser.parse_args()
+
+    logging.info("Fetching data…")
+    records = fetch_json(args.url)
+
+    logging.info("Building DataFrame…")
+    df = pd.json_normalize(records)
+    df['description'] = df['description'].fillna('').astype(str)
+    df['domain']      = df['domain'].fillna('').astype(str)
+
+    logging.info("Computing features…")
+    df = preprocess(df)
+
+    logging.info("Computing recommendations…")
+    df['recommendations'] = compute_recommendations(df, top_k=args.top_k)
+
+    logging.info("Saving JSON…")
+    save_json(df, args.out)
+
+if __name__ == '__main__':
+    main()
+    logging.info("Done.")
