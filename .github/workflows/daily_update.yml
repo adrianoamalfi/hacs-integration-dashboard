@@ -1,0 +1,37 @@
+name: Daily HACS Update
+
+on:
+  schedule:
+    - cron: '0 0 * * *'      # ogni giorno a mezzanotte UTC
+  workflow_dispatch:         # permette anche run manuale
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+        with:
+          persist-credentials: true  # per push con GITHUB_TOKEN
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run update script
+        run: |
+          python update_json.py
+
+      - name: Commit and push JSON
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/integrations_enhanced.json
+          git commit -m "⚙️ Daily HACS update $(date -u '+%Y-%m-%d')" || echo "No changes"
+          git push
