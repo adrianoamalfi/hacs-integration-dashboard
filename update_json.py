@@ -120,18 +120,10 @@ print(df[[
 import json
 
 
-# 8. Esporta in JSON i record arricchiti senza NaN
-#    Sostituisci NaN/NA con None → diventeranno `null` nel JSON
-df_clean = df.where(pd.notnull(df), None)
+# Sostituisci NaN con None
+df = df.where(pd.notnull(df), None)
 
-output_records = df_clean.to_dict(orient='records')
-with open('integrations_enhanced.json', 'w', encoding='utf-8') as f:
-    json.dump(
-        output_records,
-        f,
-        ensure_ascii=False,
-        indent=2,
-        default=str  # serve se hai ancora oggetti non serializzabili
-    )
-
-print(f"Salvato 'integrations_enhanced.json' con {len(output_records)} record (senza NaN).")
+# Esporta JSON in docs/
+with open('docs/integrations_enhanced.json', 'w', encoding='utf-8') as f:
+    json.dump(df.to_dict(orient='records'), f, ensure_ascii=False, indent=2, default=str)
+print("Output scritto in docs/integrations_enhanced.json")
