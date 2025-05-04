@@ -1,12 +1,73 @@
-<!-- docs/index.html -->
-<!doctype html>
+<!DOCTYPE html>
 <html lang="it">
 <head>
-  <meta charset="utf-8">
-  <title>HACS Integrations Data</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HACS Integrations Dashboard</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 2rem; background: #f9f9f9; }
+    header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
+    h1 { margin: 0; font-size: 1.5rem; }
+    button { padding: 0.5rem 1rem; font-size: 0.9rem; cursor: pointer; }
+    #json-preview { white-space: pre-wrap; background: #fff; border: 1px solid #ddd; padding: 1rem; max-height: 60vh; overflow: auto; }
+    #search { width: 100%; padding: 0.5rem; margin-bottom: 1rem; }
+  </style>
 </head>
 <body>
-  <h1>HACS Integrations Enhanced JSON</h1>
-  <p><a href="./integrations_enhanced.json">Scarica qui il JSON aggiornato</a></p>
+  <header>
+    <h1>HACS Integrations Dashboard</h1>
+    <div>
+      <button id="copyUrlBtn">Copia URL JSON</button>
+    </div>
+  </header>
+  <input type="text" id="search" placeholder="Cerca integrazione...">
+  <div id="json-preview">Caricamento dati...</div>
+
+  <script>
+    const jsonUrl = './integrations_enhanced.json';
+    const preview = document.getElementById('json-preview');
+    const copyBtn = document.getElementById('copyUrlBtn');
+    const searchInput = document.getElementById('search');
+    let data = [];
+
+    async function loadData() {
+      try {
+        const resp = await fetch(jsonUrl);
+        data = await resp.json();
+        render(data);
+      } catch (err) {
+        preview.textContent = 'Errore nel caricamento: ' + err;
+      }
+    }
+
+    function render(list) {
+      if (!list.length) {
+        preview.textContent = 'Nessuna integrazione trovata.';
+        return;
+      }
+      // Mostra solo 20 elementi per default
+      const top = list.slice(0, 20);
+      const html = top.map(item => {
+        return `<strong>${item.full_name}</strong> – ⭐ ${item.stars} – <em>${item.development_status}</em>`;
+      }).join('<br>');
+      preview.innerHTML = html;
+    }
+
+    // Filtro di ricerca
+    searchInput.addEventListener('input', e => {
+      const q = e.target.value.toLowerCase();
+      const filtered = data.filter(item => item.full_name.toLowerCase().includes(q));
+      render(filtered);
+    });
+
+    // Copia URL JSON
+    copyBtn.addEventListener('click', () => {
+      navigator.clipboard.writeText(window.location.origin + window.location.pathname.replace(/index\.html$/, '') + jsonUrl)
+        .then(() => alert('URL copiato negli appunti!'))
+        .catch(err => alert('Errore copia: ' + err));
+    });
+
+    loadData();
+  </script>
 </body>
 </html>
