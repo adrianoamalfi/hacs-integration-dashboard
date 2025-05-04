@@ -32,6 +32,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add docs/integrations_enhanced.json
+          git add docs/integrations_full.json
+          git add docs/integrations_summary.json
           git commit -m "⚙️ Daily HACS update $(date -u '+%Y-%m-%d')" || echo "No changes"
           git push
