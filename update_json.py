@@ -5,7 +5,7 @@ import os
 import re
 import time
 from argparse import ArgumentParser
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import pandas as pd
 import requests
@@ -26,6 +26,7 @@ WEIGHTS = {
     'recency':    0.05,
 }
 
+
 # ————————————————————————————————————————————————————————————————
 # 1) FETCH DEL JSON CON RETRY
 # ————————————————————————————————————————————————————————————————
@@ -40,10 +41,11 @@ def fetch_json(url: str, retries: int = 3, backoff: int = 2) -> list[dict]:
         except Exception as e:
             logging.warning(f"[try {attempt}/{retries}] fetch error: {e}")
             if attempt < retries:
-                time.sleep(backoff**attempt)
+                time.sleep(backoff ** attempt)
             else:
                 raise
     return []
+
 
 # ————————————————————————————————————————————————————————————————
 # 2) PREPROCESS E FEATURE ENGINEERING
@@ -93,8 +95,8 @@ def preprocess(df: pd.DataFrame) -> pd.DataFrame:
     df['popularity_score'] = 0.5 * df['stars_norm'] + 0.5 * df['downloads_norm']
 
     # --- 2.8 metadati
-    df['topic_count']       = df['topics'].apply(lambda x: len(x) if isinstance(x, list) else 0)
-    df['description_length']= df['description'].fillna('').astype(str).str.len()
+    df['topic_count']        = df['topics'].apply(lambda x: len(x) if isinstance(x, list) else 0)
+    df['description_length'] = df['description'].fillna('').astype(str).str.len()
 
     # --- 2.9 top-100 flags per indicatore chiave
     numeric_inds = [
@@ -106,6 +108,7 @@ def preprocess(df: pd.DataFrame) -> pd.DataFrame:
         df[flag_col] = df[ind].rank(method='first', ascending=False) <= 100
 
     return df
+
 
 # ————————————————————————————————————————————————————————————————
 # 3) COSTRUZIONE SET DI TAG
@@ -122,11 +125,13 @@ def make_sets(row: pd.Series) -> tuple[set, set]:
     sem |= {w for w in words if len(w) > 2}
     return topics_set, sem
 
+
 # ————————————————————————————————————————————————————————————————
 # 4) JACCARD SIMILARITY
 # ————————————————————————————————————————————————————————————————
 def jaccard(a: set, b: set) -> float:
     return len(a & b) / len(a | b) if (a or b) else 0.0
+
 
 # ————————————————————————————————————————————————————————————————
 # 5) RACCOMANDAZIONI IBRIDE
@@ -134,18 +139,19 @@ def jaccard(a: set, b: set) -> float:
 def compute_recommendations(df: pd.DataFrame, top_k: int = 5) -> list[list[str]]:
     topics_sets, sem_sets = zip(*df.apply(make_sets, axis=1))
     pop_score = df['popularity_score'].tolist()
-    rec_norm  = df['recency_norm'].tolist()
-    names     = df['full_name'].tolist()
+    rec_norm   = df['recency_norm'].tolist()
+    names      = df['full_name'].tolist()
 
     recs = []
     for i in range(len(df)):
         scores = []
         for j in range(len(df)):
-            if i == j: continue
+            if i == j:
+                continue
             score = (
                 WEIGHTS['topics']     * jaccard(topics_sets[i], topics_sets[j]) +
                 WEIGHTS['semantic']   * jaccard(sem_sets[i],       sem_sets[j])   +
-                WEIGHTS['popularity'] * pop_score[j]                                +
+                WEIGHTS['popularity'] * pop_score[j]                                 +
                 WEIGHTS['recency']    * rec_norm[j]
             )
             scores.append((j, score))
@@ -153,10 +159,12 @@ def compute_recommendations(df: pd.DataFrame, top_k: int = 5) -> list[list[str]]
         recs.append([names[j] for j, _ in top])
     return recs
 
+
 # ————————————————————————————————————————————————————————————————
-# 6) SALVATAGGIO ATOMICO
+# 6) SALVATAGGIO ATOMICO E RIMOZIONE NaN
 # ————————————————————————————————————————————————————————————————
 def save_json(df: pd.DataFrame, out_path: str, atomically: bool = True):
+    # sostituisci NaN/NA con None → verrà serializzato come null
     clean = df.where(pd.notnull(df), None).to_dict(orient='records')
     data = json.dumps(clean, ensure_ascii=False, separators=(',', ':'), default=str)
     if atomically:
@@ -168,6 +176,7 @@ def save_json(df: pd.DataFrame, out_path: str, atomically: bool = True):
         with open(out_path, 'w', encoding='utf-8') as f:
             f.write(data)
     logging.info(f"Wrote {len(clean)} records to {out_path}")
+
 
 # ————————————————————————————————————————————————————————————————
 # MAIN: orchestrazione
@@ -184,6 +193,7 @@ def main():
 
     logging.info("Building DataFrame…")
     df = pd.json_normalize(records)
+    # assicura stringhe non-null
     df['description'] = df['description'].fillna('').astype(str)
     df['domain']      = df['domain'].fillna('').astype(str)
 
@@ -196,6 +206,8 @@ def main():
     logging.info("Saving JSON…")
     save_json(df, args.out)
 
+    logging.info("Done.")
+
+
 if __name__ == '__main__':
     main()
-    logging.info("Done.")
