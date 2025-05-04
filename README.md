@@ -1,7 +1,7 @@
 # hacs-integration-dashboard
 
 [![Daily Update](https://github.com/adrianoamalfi/hacs-integration-dashboard/actions/workflows/daily_update.yml/badge.svg)](https://github.com/adrianoamalfi/hacs-integration-dashboard/actions)
-[![GitHub Pages](https://github.com/adrianoamalfi/hacs-integration-dashboard/workflows/GitHub%20Pages/badge.svg)](https://adrianoamalfi.github.io/hacs-integration-dashboard/)
+[![pages-build-deployment](https://github.com/adrianoamalfi/hacs-integration-dashboard/actions/workflows/pages/pages-build-deployment/badge.svg)](https://github.com/adrianoamalfi/hacs-integration-dashboard/actions/workflows/pages/pages-build-deployment)
 
 **HACS Integration Dashboard** è un sito statico e un dataset JSON aggiornato quotidianamente che aggrega le integrazioni Home Assistant personalizzate con metadati arricchiti e raccomandazioni.
 
