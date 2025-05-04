@@ -120,10 +120,12 @@ print(df[[
 import json
 
 
-# Sostituisci NaN con None
-df = df.where(pd.notnull(df), None)
-
-# Esporta JSON in docs/
-with open('docs/integrations_enhanced.json', 'w', encoding='utf-8') as f:
-    json.dump(df.to_dict(orient='records'), f, ensure_ascii=False, indent=2, default=str)
-print("Output scritto in docs/integrations_enhanced.json")
+# 8. Esporta con pandas.to_json (minificato e con date ISO)
+df.to_json(
+    'docs/integrations_enhanced.json',
+    orient='records',
+    force_ascii=False,
+    date_format='iso',
+    date_unit='ms'      # opzionale, imposta unità dei timestamp
+)
+print("JSON esportato in docs/integrations_enhanced.json")
