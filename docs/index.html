@@ -5,12 +5,58 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>HACS Integrations Dashboard</title>
   <style>
-    body { font-family: Arial, sans-serif; margin: 2rem; background: #f9f9f9; }
-    header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
-    h1 { margin: 0; font-size: 1.5rem; }
-    button { padding: 0.5rem 1rem; font-size: 0.9rem; cursor: pointer; }
-    #json-preview { white-space: pre-wrap; background: #fff; border: 1px solid #ddd; padding: 1rem; max-height: 60vh; overflow: auto; }
-    #search { width: 100%; padding: 0.5rem; margin-bottom: 1rem; }
+    body {
+      font-family: Arial, sans-serif;
+      margin: 2rem;
+      background: #f9f9f9;
+    }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1rem;
+    }
+    h1 {
+      margin: 0;
+      font-size: 1.5rem;
+    }
+    button {
+      padding: 0.5rem 1rem;
+      font-size: 0.9rem;
+      cursor: pointer;
+    }
+    #search {
+      width: 100%;
+      padding: 0.5rem;
+      margin-bottom: 1rem;
+      box-sizing: border-box;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: #fff;
+    }
+    thead {
+      background: #333;
+      color: #fff;
+    }
+    th, td {
+      padding: 0.5rem;
+      border: 1px solid #ddd;
+      text-align: left;
+      font-size: 0.9rem;
+    }
+    tbody tr:nth-child(even) {
+      background: #f4f4f4;
+    }
+    #loadMore {
+      margin-top: 1rem;
+      padding: 0.5rem 1rem;
+    }
+    .small {
+      font-size: 0.8rem;
+      color: #555;
+    }
   </style>
 </head>
 <body>
@@ -20,49 +66,109 @@
       <button id="copyUrlBtn">Copia URL JSON</button>
     </div>
   </header>
-  <input type="text" id="search" placeholder="Cerca integrazione...">
-  <div id="json-preview">Caricamento dati...</div>
+
+  <input type="text" id="search" placeholder="Cerca integrazione per nome...">
+
+  <table id="integration-table">
+    <thead>
+      <tr>
+        <th>Nome</th>
+        <th>⭐ Stars</th>
+        <th>⬇️ Downloads</th>
+        <th>👀 Watchers</th>
+        <th>Stato</th>
+        <th>Top100★</th>
+        <th>Top100⬇️</th>
+        <th>Pop Score</th>
+        <th>Topics</th>
+        <th>Reco (5)</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+  <button id="loadMore">Carica altri</button>
 
   <script>
-    const jsonUrl = './integrations_enhanced.json';
-    const preview = document.getElementById('json-preview');
-    const copyBtn = document.getElementById('copyUrlBtn');
+    const jsonUrl     = './integrations_enhanced.json';
+    const tableBody   = document.querySelector('#integration-table tbody');
     const searchInput = document.getElementById('search');
+    const copyBtn     = document.getElementById('copyUrlBtn');
+    const loadMoreBtn = document.getElementById('loadMore');
+
     let data = [];
+    let displayCount = 20;
+    const INCREMENT = 20;
 
     async function loadData() {
       try {
         const resp = await fetch(jsonUrl);
         data = await resp.json();
-        render(data);
+        renderTable(data);
       } catch (err) {
-        preview.textContent = 'Errore nel caricamento: ' + err;
+        tableBody.innerHTML = `<tr><td colspan="10">Errore nel caricamento: ${err}</td></tr>`;
       }
     }
 
-    function render(list) {
-      if (!list.length) {
-        preview.textContent = 'Nessuna integrazione trovata.';
+    function renderTable(list) {
+      tableBody.innerHTML = '';
+      const slice = list.slice(0, displayCount);
+      if (!slice.length) {
+        tableBody.innerHTML = `<tr><td colspan="10">Nessuna integrazione trovata.</td></tr>`;
+        loadMoreBtn.style.display = 'none';
         return;
       }
-      // Mostra solo 20 elementi per default
-      const top = list.slice(0, 20);
-      const html = top.map(item => {
-        return `<strong>${item.full_name}</strong> – ⭐ ${item.stars} – <em>${item.development_status}</em>`;
-      }).join('<br>');
-      preview.innerHTML = html;
+      slice.forEach(item => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>
+            <a href="https://github.com/${item.full_name}" target="_blank">
+              ${item.full_name}
+            </a>
+            <div class="small">${item.description.slice(0, 80)}${item.description.length>80?'…':''}</div>
+          </td>
+          <td>${item.stars}</td>
+          <td>${item.downloads}</td>
+          <td>${item.watchers_count ?? 0}</td>
+          <td>${item.development_status}</td>
+          <td>${item.is_top100_stars ? '✔️' : ''}</td>
+          <td>${item.is_top100_downloads ? '✔️' : ''}</td>
+          <td>${(item.popularity_score).toFixed(2)}</td>
+          <td>${item.topic_count}</td>
+          <td>${item.recommendations.join(', ')}</td>
+        `;
+        tableBody.appendChild(tr);
+      });
+      // Mostra o nascondi bottone load more
+      loadMoreBtn.style.display = list.length > displayCount ? 'block' : 'none';
     }
 
-    // Filtro di ricerca
+    // Filtro live per nome
     searchInput.addEventListener('input', e => {
       const q = e.target.value.toLowerCase();
-      const filtered = data.filter(item => item.full_name.toLowerCase().includes(q));
-      render(filtered);
+      const filtered = data.filter(item =>
+        item.full_name.toLowerCase().includes(q)
+      );
+      displayCount = INCREMENT; // reset displayCount
+      renderTable(filtered);
+    });
+
+    // Carica più righe
+    loadMoreBtn.addEventListener('click', () => {
+      displayCount += INCREMENT;
+      const q = searchInput.value.toLowerCase();
+      const filtered = q
+        ? data.filter(item => item.full_name.toLowerCase().includes(q))
+        : data;
+      renderTable(filtered);
     });
 
     // Copia URL JSON
     copyBtn.addEventListener('click', () => {
-      navigator.clipboard.writeText(window.location.origin + window.location.pathname.replace(/index\.html$/, '') + jsonUrl)
+      const fullUrl = window.location.origin +
+        window.location.pathname.replace(/index\.html$/, '') +
+        jsonUrl;
+      navigator.clipboard.writeText(fullUrl)
         .then(() => alert('URL copiato negli appunti!'))
         .catch(err => alert('Errore copia: ' + err));
     });
