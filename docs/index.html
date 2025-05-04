@@ -2,178 +2,43 @@
 <html lang="it">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>HACS Integrations Dashboard</title>
+  <title>HACS Integrations JSON</title>
   <style>
     body {
-      font-family: Arial, sans-serif;
-      margin: 2rem;
-      background: #f9f9f9;
+      font-family: monospace;
+      margin: 1rem;
+      background: #f0f0f0;
     }
-    header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 1rem;
-    }
-    h1 {
-      margin: 0;
-      font-size: 1.5rem;
-    }
-    button {
-      padding: 0.5rem 1rem;
-      font-size: 0.9rem;
-      cursor: pointer;
-    }
-    #search {
-      width: 100%;
-      padding: 0.5rem;
-      margin-bottom: 1rem;
-      box-sizing: border-box;
-    }
-    table {
-      width: 100%;
-      border-collapse: collapse;
+    pre {
       background: #fff;
+      border: 1px solid #ccc;
+      padding: 1rem;
+      overflow: auto;
+      max-height: 90vh;
+      white-space: pre-wrap;
+      word-break: break-word;
     }
-    thead {
-      background: #333;
-      color: #fff;
-    }
-    th, td {
-      padding: 0.5rem;
-      border: 1px solid #ddd;
-      text-align: left;
-      font-size: 0.9rem;
-    }
-    tbody tr:nth-child(even) {
-      background: #f4f4f4;
-    }
-    #loadMore {
-      margin-top: 1rem;
-      padding: 0.5rem 1rem;
-    }
-    .small {
-      font-size: 0.8rem;
-      color: #555;
+    a {
+      display: inline-block;
+      margin-bottom: 1rem;
     }
   </style>
 </head>
 <body>
-  <header>
-    <h1>HACS Integrations Dashboard</h1>
-    <div>
-      <button id="copyUrlBtn">Copia URL JSON</button>
-    </div>
-  </header>
-
-  <input type="text" id="search" placeholder="Cerca integrazione per nome...">
-
-  <table id="integration-table">
-    <thead>
-      <tr>
-        <th>Nome</th>
-        <th>⭐ Stars</th>
-        <th>⬇️ Downloads</th>
-        <th>👀 Watchers</th>
-        <th>Stato</th>
-        <th>Top100★</th>
-        <th>Top100⬇️</th>
-        <th>Pop Score</th>
-        <th>Topics</th>
-        <th>Reco (5)</th>
-      </tr>
-    </thead>
-    <tbody></tbody>
-  </table>
-
-  <button id="loadMore">Carica altri</button>
+  <h1>HACS Integrations JSON</h1>
+  <p><a href="integrations_enhanced.json" target="_blank">Apri il JSON in una nuova scheda</a></p>
+  <pre id="json-view">Caricamento…</pre>
 
   <script>
-    const jsonUrl     = './integrations_enhanced.json';
-    const tableBody   = document.querySelector('#integration-table tbody');
-    const searchInput = document.getElementById('search');
-    const copyBtn     = document.getElementById('copyUrlBtn');
-    const loadMoreBtn = document.getElementById('loadMore');
-
-    let data = [];
-    let displayCount = 20;
-    const INCREMENT = 20;
-
-    async function loadData() {
-      try {
-        const resp = await fetch(jsonUrl);
-        data = await resp.json();
-        renderTable(data);
-      } catch (err) {
-        tableBody.innerHTML = `<tr><td colspan="10">Errore nel caricamento: ${err}</td></tr>`;
-      }
-    }
-
-    function renderTable(list) {
-      tableBody.innerHTML = '';
-      const slice = list.slice(0, displayCount);
-      if (!slice.length) {
-        tableBody.innerHTML = `<tr><td colspan="10">Nessuna integrazione trovata.</td></tr>`;
-        loadMoreBtn.style.display = 'none';
-        return;
-      }
-      slice.forEach(item => {
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
-          <td>
-            <a href="https://github.com/${item.full_name}" target="_blank">
-              ${item.full_name}
-            </a>
-            <div class="small">${item.description.slice(0, 80)}${item.description.length>80?'…':''}</div>
-          </td>
-          <td>${item.stars}</td>
-          <td>${item.downloads}</td>
-          <td>${item.watchers_count ?? 0}</td>
-          <td>${item.development_status}</td>
-          <td>${item.is_top100_stars ? '✔️' : ''}</td>
-          <td>${item.is_top100_downloads ? '✔️' : ''}</td>
-          <td>${(item.popularity_score).toFixed(2)}</td>
-          <td>${item.topic_count}</td>
-          <td>${item.recommendations.join(', ')}</td>
-        `;
-        tableBody.appendChild(tr);
+    fetch('integrations_enhanced.json')
+      .then(resp => resp.text())
+      .then(txt => {
+        document.getElementById('json-view').textContent = txt;
+      })
+      .catch(err => {
+        document.getElementById('json-view').textContent =
+          'Errore nel caricamento del file: ' + err;
       });
-      // Mostra o nascondi bottone load more
-      loadMoreBtn.style.display = list.length > displayCount ? 'block' : 'none';
-    }
-
-    // Filtro live per nome
-    searchInput.addEventListener('input', e => {
-      const q = e.target.value.toLowerCase();
-      const filtered = data.filter(item =>
-        item.full_name.toLowerCase().includes(q)
-      );
-      displayCount = INCREMENT; // reset displayCount
-      renderTable(filtered);
-    });
-
-    // Carica più righe
-    loadMoreBtn.addEventListener('click', () => {
-      displayCount += INCREMENT;
-      const q = searchInput.value.toLowerCase();
-      const filtered = q
-        ? data.filter(item => item.full_name.toLowerCase().includes(q))
-        : data;
-      renderTable(filtered);
-    });
-
-    // Copia URL JSON
-    copyBtn.addEventListener('click', () => {
-      const fullUrl = window.location.origin +
-        window.location.pathname.replace(/index\.html$/, '') +
-        jsonUrl;
-      navigator.clipboard.writeText(fullUrl)
-        .then(() => alert('URL copiato negli appunti!'))
-        .catch(err => alert('Errore copia: ' + err));
-    });
-
-    loadData();
   </script>
 </body>
 </html>
